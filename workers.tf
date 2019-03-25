@@ -1,19 +1,23 @@
 resource "scaleway_ip" "swarm_worker_ip" {
-  count = "${var.worker_instance_count}"
+  count = "${var.nodes}"
 }
 
 resource "scaleway_server" "swarm_worker" {
-  count          = "${var.worker_instance_count}"
+  count          = "${var.nodes}"
   name           = "${terraform.workspace}-worker-${count.index + 1}"
-  image          = "${data.scaleway_image.xenial.id}"
-  type           = "${var.worker_instance_type}"
-  bootscript     = "${data.scaleway_bootscript.rancher.id}"
+  image          = "${data.scaleway_image.ubuntu.id}"
+  type           = "${var.server_type}"
   security_group = "${scaleway_security_group.swarm_workers.id}"
   public_ip      = "${element(scaleway_ip.swarm_worker_ip.*.ip, count.index)}"
 
   connection {
     type = "ssh"
     user = "root"
+    private_key = "${file(var.private_key)}"
+  }
+  provisioner "file" {
+    source      = "scripts/"
+    destination = "/tmp"
   }
 
   provisioner "remote-exec" {
@@ -34,9 +38,14 @@ resource "scaleway_server" "swarm_worker" {
 
   provisioner "remote-exec" {
     inline = [
-      "chmod +x /tmp/install-docker-ce.sh",
-      "/tmp/install-docker-ce.sh ${var.docker_version}",
-      "docker swarm join --token ${data.external.swarm_tokens.result.worker} ${scaleway_server.swarm_manager.0.private_ip}:2377",
+      <<EOT
+#!/bin/bash
+set -e
+chmod +x /tmp/docker-install.sh
+export ubuntu_version=$(echo -n ${var.ubuntu_version} | cut -d " " -f 2 | awk '{print tolower($0)}')
+/tmp/docker-install.sh $${ubuntu_version} ${var.arch} ${var.docker_version}
+docker swarm join --token ${data.external.swarm_tokens.result.worker} ${scaleway_server.swarm_manager.0.private_ip}:2377
+EOT
     ]
   }
 
